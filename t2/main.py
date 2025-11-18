@@ -128,7 +128,7 @@ model = tf.keras.Sequential([
     data_augmentation,
     base_model,
     tf.keras.layers.GlobalAveragePooling2D(),
-    tf.keras.layers.Dropout(0.4),
+    tf.keras.layers.Dropout(0.3),  # Dropout moderado
     tf.keras.layers.Dense(2, activation="softmax")  # 2 classes fixo
 ])
 
@@ -160,11 +160,11 @@ history = model.fit(
 # =====================================================
 base_model.trainable = True
 
-for layer in base_model.layers[:20]:
+for layer in base_model.layers[:50]:  # Congela 50 camadas iniciais
     layer.trainable = False
 
 model.compile(
-    optimizer=tf.keras.optimizers.Adam(5e-6),
+    optimizer=tf.keras.optimizers.Adam(5e-6),  # Learning rate baixo para fine-tuning
     loss="sparse_categorical_crossentropy",
     metrics=["accuracy"]
 )
@@ -193,7 +193,7 @@ for images, labels in test_ds:
     preds = model.predict(images)
     y_true.extend(labels.numpy())
     y_pred.extend(np.argmax(preds, axis=1))
-    y_scores.extend(preds)
+    y_scores.append(preds)  # Usar append ao invés de extend
 
 cm = confusion_matrix(y_true, y_pred)
 
@@ -202,7 +202,7 @@ sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
             xticklabels=classes, yticklabels=classes)
 plt.xlabel("Predito")
 plt.ylabel("Real")
-plt.title("Matriz de Confusão")
+plt.title("Matriz de Confusão - Conjunto de TESTE")
 plt.show()
 
 # =====================================================
@@ -211,24 +211,29 @@ plt.show()
 report = classification_report(y_true, y_pred, target_names=classes, output_dict=True)
 df_report = pd.DataFrame(report).transpose()
 
-print("\nRelatório de Classificação:")
+print("\n📊 Relatório de Classificação (TESTE):")
 print(df_report)
 
 plt.figure(figsize=(8, 4))
 sns.heatmap(df_report.iloc[:-1, :-1].astype(float), annot=True, cmap="Purples")
-plt.title("Métricas: Precision, Recall, F1-score")
+plt.title("Métricas no Conjunto de TESTE")
 plt.show()
 
 # =====================================================
 # 12. CURVA ROC / AUC (FUNCIONA SEMPRE)
 # =====================================================
-y_true_bin = label_binarize(y_true, classes=[0, 1])
-y_scores = np.array(y_scores)
+y_scores = np.vstack(y_scores)  # Concatena os batches verticalmente
 
-# Garante 2 colunas SEMPRE
+# Garante que y_scores tenha 2 colunas
 if y_scores.shape[1] == 1:
-    print("\n[AVISO] Modelo retornou apenas 1 coluna. Convertendo...")
     y_scores = np.hstack([1 - y_scores, y_scores])
+
+# Para 2 classes, label_binarize pode retornar shape (n, 1)
+# Expandimos para (n, 2) para compatibilidade com y_scores
+y_true_bin = label_binarize(y_true, classes=[0, 1])
+
+if y_true_bin.shape[1] == 1:
+    y_true_bin = np.hstack([1 - y_true_bin, y_true_bin])
 
 plt.figure(figsize=(7, 6))
 
@@ -238,29 +243,46 @@ for i, cls in enumerate(classes):
     plt.plot(fpr, tpr, label=f"{cls} (AUC = {roc_auc:.2f})")
 
 plt.plot([0, 1], [0, 1], "k--")
-plt.title("Curva ROC / AUC")
+plt.title("Curva ROC/AUC - Conjunto de TESTE")
 plt.xlabel("False Positive Rate")
 plt.ylabel("True Positive Rate")
 plt.legend()
 plt.show()
 
 # =====================================================
-# 13. VISUALIZAÇÃO DE PREVISÕES
+# 13. VISUALIZAÇÃO DE PREVISÕES (TESTE)
 # =====================================================
-plt.figure(figsize=(10, 10))
-for i in range(9):
-    img_batch, label_batch = next(iter(test_ds))
-    idx = random.randint(0, len(img_batch) - 1)
-    img = img_batch[idx].numpy().astype("uint8")
+# Pegar um único batch para visualização
+test_iter = iter(test_ds)
+img_batch, label_batch = next(test_iter)
 
-    pred = model.predict(img_batch[idx:idx+1])
+fig = plt.figure(figsize=(10, 10))
+fig.suptitle('Exemplos de Previsões - Conjunto de TESTE', fontsize=14, fontweight='bold')
+num_samples = min(9, len(img_batch))  # Garante que não ultrapasse o tamanho do batch
+
+for i in range(num_samples):
+    img = img_batch[i].numpy()
+    # Normalizar imagem para visualização (0-255)
+    img_min = img.min()
+    img_max = img.max()
+    img_normalized = ((img - img_min) / (img_max - img_min) * 255).astype("uint8")
+
+    pred = model.predict(img_batch[i:i+1], verbose=0)
     pred_label = classes[np.argmax(pred)]
-
+    true_label = classes[label_batch[i]]
+    
     plt.subplot(3, 3, i+1)
-    plt.imshow(img)
-    plt.title(f"Real: {classes[label_batch[idx]]}\nPred: {pred_label}")
+    plt.imshow(img_normalized)
+    
+    # Cor verde se acertou, vermelha se errou
+    color = 'green' if pred_label == true_label else 'red'
+    plt.title(f"Real: {true_label}\nPred: {pred_label}", color=color, fontsize=10)
     plt.axis("off")
 
+plt.tight_layout()
 plt.show()
 
-print("\nExecução finalizada com sucesso!")
+print("\n" + "="*60)
+print("✅ Execução finalizada com sucesso!")
+print(f"📊 Acurácia Final no Teste: {acc*100:.2f}%")
+print("="*60)
